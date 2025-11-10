@@ -1,0 +1,21 @@
+
+## Build results
+[Dd]ebug/
+[Rr]elease/
+bin/
+obj/
+*.log
+*.sqlite
+*.db
+*.bak
+*.dll
+*.exe
+*.pdb
+*.user
+*.suo
+*.cache
+*.docstates
+
+## Nuget cache
+**/.nuget/
+EOT
