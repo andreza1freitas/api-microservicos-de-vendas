@@ -5,6 +5,8 @@ using Vendas.API.Data;
 using Vendas.API.Models;
 using System.Net;
 using Shared;
+using Vendas.API.Services;
+using Shared.Events;
 
 [Route("api/[controller]")]
 [ApiController]
@@ -12,12 +14,14 @@ public class PedidosController : ControllerBase
 {
     private readonly VendasDbContext _context;
     private readonly HttpClient _httpClient; // Para comunicação síncrona com Estoque
+    private readonly IMessageBusPublisher _messageBusPublisher;
 
-    public PedidosController(VendasDbContext context, IHttpClientFactory httpClientFactory)
+    public PedidosController(VendasDbContext context, IHttpClientFactory httpClientFactory,
+                             IMessageBusPublisher messageBusPublisher)
     {
         _context = context;
-        // Cria uma instância de HttpClient para chamadas externas
-        _httpClient = httpClientFactory.CreateClient("EstoqueApiClient"); 
+        _httpClient = httpClientFactory.CreateClient("EstoqueApiClient");
+        _messageBusPublisher = messageBusPublisher;
     }
 
     // GET api/pedidos
@@ -67,7 +71,7 @@ public class PedidosController : ControllerBase
             {
                 ProdutoId = i.ProdutoId,
                 Quantidade = i.Quantidade,
-                PrecoUnitario = i.PrecoUnitario 
+                PrecoUnitario = i.PrecoUnitario
             }).ToList()
         };
 
@@ -75,6 +79,20 @@ public class PedidosController : ControllerBase
 
         _context.Pedidos.Add(novoPedido);
         await _context.SaveChangesAsync();
+
+        // Notificação assíncrona via RabbitMQ
+        var evento = new PedidoCriadoEvent
+        {
+            PedidoId = novoPedido.Id,
+            DataPedido = novoPedido.DataPedido,
+            Itens = novoPedido.Itens.Select(i => new ItemPedidoEvent
+            {
+                ProdutoId = i.ProdutoId,
+                Quantidade = i.Quantidade
+            }).ToList()
+        };
+
+        _messageBusPublisher.PublishPedidoCriado(evento); // Publica a mensagem
 
         return CreatedAtAction(nameof(ConsultarPedidos), new { id = novoPedido.Id }, novoPedido);
     }
