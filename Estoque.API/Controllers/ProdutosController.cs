@@ -50,5 +50,20 @@ namespace Estoque.API.Controllers
 
             return produto;
         }
+
+        // GET api/produtos/validar?produtoId=5&quantidade=2
+        [HttpGet("/api/Produtos/validar")]
+        public async Task<IActionResult> ValidarEstoque(int produtoId, int quantidade)
+        {
+            var produto = await _context.Produtos.FindAsync(produtoId);
+
+            if (produto is null)
+                return NotFound($"Produto ID {produtoId} não encontrado.");
+
+            if (produto.QuantidadeEmEstoque < quantidade)
+                return BadRequest($"Estoque insuficiente. Disponível: {produto.QuantidadeEmEstoque}. Requerido: {quantidade}.");
+
+            return Ok(true);
+        }
     }
 }
