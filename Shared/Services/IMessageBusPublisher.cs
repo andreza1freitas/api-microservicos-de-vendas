@@ -8,6 +8,6 @@ namespace Vendas.API.Services
 {
     public interface IMessageBusPublisher
     {
-        void PublishPedidoCriado(PedidoCriadoEvent evento);
+        void PublishEvent(PedidoCriadoEvent evento);
     }
 }

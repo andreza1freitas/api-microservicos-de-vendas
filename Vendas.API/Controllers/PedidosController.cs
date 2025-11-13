@@ -1,4 +1,3 @@
-// Vendas.API/Controllers/PedidosController.cs
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Vendas.API.Data;
@@ -13,15 +12,17 @@ using Shared.Events;
 public class PedidosController : ControllerBase
 {
     private readonly VendasDbContext _context;
-    private readonly HttpClient _httpClient; // Para comunicação síncrona com Estoque
-    private readonly IMessageBusPublisher _messageBusPublisher;
+    private readonly HttpClient _httpClient;
+    private readonly IMessageBusPublisher _publisher;
+    private readonly IConfiguration _configuration;
 
     public PedidosController(VendasDbContext context, IHttpClientFactory httpClientFactory,
-                             IMessageBusPublisher messageBusPublisher)
+                             IMessageBusPublisher messageBusPublisher, IConfiguration configuration)
     {
         _context = context;
         _httpClient = httpClientFactory.CreateClient("EstoqueApiClient");
-        _messageBusPublisher = messageBusPublisher;
+        _publisher = messageBusPublisher;
+        _configuration = configuration;
     }
 
     // GET api/pedidos
@@ -42,23 +43,19 @@ public class PedidosController : ControllerBase
             return BadRequest("O pedido deve conter itens.");
         }
 
-        // Validação de Estoque síncrona (CHAMADA HTTP PARA ESTOQUE.API)
+        // Validação de Estoque síncrona
         foreach (var item in request.Itens)
         {
-            // URL de validação: Ex: http://localhost:5154/api/Produtos/validar?produtoId=1&quantidade=5
             var validationUrl = $"http://localhost:5154/api/Produtos/validar?produtoId={item.ProdutoId}&quantidade={item.Quantidade}";
 
             var response = await _httpClient.GetAsync(validationUrl);
 
-            if (response.StatusCode == HttpStatusCode.NotFound)
-            {
-                return NotFound($"Produto ID {item.ProdutoId} não encontrado ou URL de Estoque inválida.");
-            }
             if (!response.IsSuccessStatusCode)
             {
-                // Se o Estoque.API retornar 400 Bad Request, assumimos que é falta de estoque
                 var content = await response.Content.ReadAsStringAsync();
-                return BadRequest($"Falha na validação de estoque para Produto ID {item.ProdutoId}: {content}");
+                var statusCode = (int)response.StatusCode;
+
+                return StatusCode(statusCode, $"Falha na validação de estoque para Produto ID {item.ProdutoId}: {content}");
             }
         }
 
@@ -81,18 +78,27 @@ public class PedidosController : ControllerBase
         await _context.SaveChangesAsync();
 
         // Notificação assíncrona via RabbitMQ
-        var evento = new PedidoCriadoEvent
+        try
         {
-            PedidoId = novoPedido.Id,
-            DataPedido = novoPedido.DataPedido,
-            Itens = novoPedido.Itens.Select(i => new ItemPedidoEvent
+            // Mapeamento explícito para o DTO do evento (Shared.Events.ItemPedidoEvent)
+            var itensParaEvento = novoPedido.Itens.Select(i => new ItemPedidoEvent
             {
                 ProdutoId = i.ProdutoId,
                 Quantidade = i.Quantidade
-            }).ToList()
-        };
+            }).ToList();
 
-        _messageBusPublisher.PublishPedidoCriado(evento); // Publica a mensagem
+            var mensagem = new PedidoCriadoEvent
+            {
+                PedidoId = novoPedido.Id,
+                Itens = itensParaEvento // Lista mapeada
+            };
+
+            _publisher.PublishEvent(mensagem);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[AVISO] Falha ao publicar mensagem no RabbitMQ: {ex.Message}. O pedido foi salvo, mas o estoque pode não ter sido baixado.");
+        }
 
         return CreatedAtAction(nameof(ConsultarPedidos), new { id = novoPedido.Id }, novoPedido);
     }

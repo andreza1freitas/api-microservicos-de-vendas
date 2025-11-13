@@ -1,4 +1,5 @@
 using Estoque.API.Data;
+using Estoque.API.Services;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -8,6 +9,12 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+
+// Registro do EstoqueService
+builder.Services.AddScoped<IEstoqueService, EstoqueService>();
+
+// Registro do RabbitMQConsumer como serviço hospedado
+builder.Services.AddHostedService<RabbitMQConsumer>();
 
 builder.Services.AddDbContext<EstoqueDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("EstoqueDbConnection")));
