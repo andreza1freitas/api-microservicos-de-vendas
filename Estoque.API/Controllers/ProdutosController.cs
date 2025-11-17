@@ -4,13 +4,15 @@ using System.Linq;
 using System.Threading.Tasks;
 using Estoque.API.Data;
 using Estoque.API.Models;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace Estoque.API.Controllers
 {
-    [Route("api/[controller]")]
+    [Authorize]
     [ApiController]
+    [Route("api/[controller]")]
     public class ProdutosController : ControllerBase
     {
         private readonly EstoqueDbContext _context;

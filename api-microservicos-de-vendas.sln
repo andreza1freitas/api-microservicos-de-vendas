@@ -11,6 +11,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ApiGateway", "ApiGateway\Ap
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Shared", "Shared\Shared.csproj", "{31A4D2B0-A3C3-4F4E-A226-D7583F577264}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Auth.API", "Auth.API\Auth.API.csproj", "{7E7C8F7A-6E9C-467F-AEA3-ABE8015F67C6}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -36,5 +38,9 @@ Global
 		{31A4D2B0-A3C3-4F4E-A226-D7583F577264}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{31A4D2B0-A3C3-4F4E-A226-D7583F577264}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{31A4D2B0-A3C3-4F4E-A226-D7583F577264}.Release|Any CPU.Build.0 = Release|Any CPU
+		{7E7C8F7A-6E9C-467F-AEA3-ABE8015F67C6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{7E7C8F7A-6E9C-467F-AEA3-ABE8015F67C6}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{7E7C8F7A-6E9C-467F-AEA3-ABE8015F67C6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{7E7C8F7A-6E9C-467F-AEA3-ABE8015F67C6}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal

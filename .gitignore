@@ -19,3 +19,8 @@ obj/
 ## Nuget cache
 **/.nuget/
 EOT
+
+# .NET Core
+project.lock.json
+project.fragment.lock.json
+artifacts/

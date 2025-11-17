@@ -6,9 +6,11 @@ using System.Net;
 using Shared;
 using Vendas.API.Services;
 using Shared.Events;
+using Microsoft.AspNetCore.Authorization;
 
-[Route("api/[controller]")]
+[Authorize]
 [ApiController]
+[Route("api/[controller]")]
 public class PedidosController : ControllerBase
 {
     private readonly VendasDbContext _context;
@@ -46,7 +48,7 @@ public class PedidosController : ControllerBase
         // Validação de Estoque síncrona
         foreach (var item in request.Itens)
         {
-            var validationUrl = $"http://localhost:5154/api/Produtos/validar?produtoId={item.ProdutoId}&quantidade={item.Quantidade}";
+            var validationUrl = $"api/Produtos/validar?produtoId={item.ProdutoId}&quantidade={item.Quantidade}";
 
             var response = await _httpClient.GetAsync(validationUrl);
 
@@ -80,7 +82,6 @@ public class PedidosController : ControllerBase
         // Notificação assíncrona via RabbitMQ
         try
         {
-            // Mapeamento explícito para o DTO do evento (Shared.Events.ItemPedidoEvent)
             var itensParaEvento = novoPedido.Itens.Select(i => new ItemPedidoEvent
             {
                 ProdutoId = i.ProdutoId,
@@ -90,9 +91,9 @@ public class PedidosController : ControllerBase
             var mensagem = new PedidoCriadoEvent
             {
                 PedidoId = novoPedido.Id,
-                Itens = itensParaEvento // Lista mapeada
+                Itens = itensParaEvento 
             };
-
+            // Publica o evento para o Estoque.API fazer a baixa assíncrona
             _publisher.PublishEvent(mensagem);
         }
         catch (Exception ex)
