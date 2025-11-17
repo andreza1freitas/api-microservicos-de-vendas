@@ -1,0 +1,72 @@
+{
+  "Routes": [
+    {
+      "DownstreamPathTemplate": "/api/auth/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "localhost",
+          "Port": 5045
+        }
+      ],
+      "UpstreamPathTemplate": "/api/auth/{everything}",
+      "UpstreamHttpMethod": [ "Post" ],
+      "Priority": 1,
+      "AuthenticationOptions": {
+        "AllowScopes": []
+      }
+    },
+    {
+      "DownstreamPathTemplate": "/api/pedidos",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "localhost",
+          "Port": 5011
+        }
+      ],
+      "UpstreamPathTemplate": "/api/vendas/pedidos",
+      "UpstreamHttpMethod": [ "Post" ],
+      "Priority": 1,
+      "AuthenticationOptions": {
+        "AuthenticationProviderKey": "Bearer",
+        "AllowedScopes": []
+      }
+    },
+    {
+      "DownstreamPathTemplate": "/api/Estoque/{everything}",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "localhost",
+          "Port": 5154
+        }
+      ],
+      "UpstreamPathTemplate": "/api/estoque/{everything}",
+      "UpstreamHttpMethod": [ "Get" ],
+      "Priority": 1,
+      "AuthenticationOptions": {
+        "AuthenticationProviderKey": "Bearer",
+        "AllowedScopes": []
+      }
+    }
+  ],
+
+  "AuthenticationProviderKeys": {
+    "Bearer": {
+      "Authority": "http://localhost:5045", 
+      "ValidateIssuer": true,
+      "ValidateAudience": true,
+      "ValidIssuer": "ecom-api-issuer",
+      "ValidAudiences": [
+        "ecom-api-audience"
+      ],
+      "RequireHttpsMetadata": false,
+      "Key": "ejyEu9GEFRboj4ggyVrAPbmfs1odBlf2EjdBf7zjnVf"
+    }
+  },
+  
+  "GlobalConfiguration": {
+    "BaseUrl": "http://localhost:5197"
+  }
+}
