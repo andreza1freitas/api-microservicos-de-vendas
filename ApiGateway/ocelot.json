@@ -1,5 +1,18 @@
 {
-  "Routes": [
+    "Routes": [
+    {
+      "DownstreamPathTemplate": "/",
+      "DownstreamScheme": "http",
+      "DownstreamHostAndPorts": [
+        {
+          "Host": "localhost",
+          "Port": 5045
+        }
+      ],
+      "UpstreamPathTemplate": "/",
+      "UpstreamHttpMethod": [ "Get" ],
+      "Priority": 0 
+    },
     {
       "DownstreamPathTemplate": "/api/auth/{everything}",
       "DownstreamScheme": "http",
@@ -34,7 +47,7 @@
       }
     },
     {
-      "DownstreamPathTemplate": "/api/Estoque/{everything}",
+      "DownstreamPathTemplate": "/api/Produtos/{everything}",
       "DownstreamScheme": "http",
       "DownstreamHostAndPorts": [
         {
@@ -43,7 +56,7 @@
         }
       ],
       "UpstreamPathTemplate": "/api/estoque/{everything}",
-      "UpstreamHttpMethod": [ "Get" ],
+      "UpstreamHttpMethod": [ "Get", "Post", "Put", "Delete" ],
       "Priority": 1,
       "AuthenticationOptions": {
         "AuthenticationProviderKey": "Bearer",
