@@ -1,58 +1,165 @@
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading.Tasks;
 using Estoque.API.Data;
-using Estoque.API.Models;
+using Microsoft.Extensions.Configuration;
+using RabbitMQ.Client;
+using Shared.Messaging;
+using System.Text.Json;
+using System.Text;
+using Shared.Enums;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+using System;
+using System.Threading.Tasks;
 
 namespace Estoque.API.Services
 {
-    public class EstoqueService : IEstoqueService
+    public class EstoqueService : IEstoqueService, IDisposable
     {
-        private readonly EstoqueDbContext _context;
-        private readonly ILogger<EstoqueService> _logger;
+        private readonly EstoqueDbContext _dbContext;
+        private readonly IConnection _rabbitMQConnection;
+        private readonly string _estoqueExchangeName;
+        private readonly IModel _channel;
 
-        public EstoqueService(EstoqueDbContext context, ILogger<EstoqueService> logger)
+        public static readonly JsonSerializerOptions JsonSerializerOptions = new()
         {
-            _context = context;
-            _logger = logger;
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        };
+
+        public EstoqueService(
+            EstoqueDbContext dbContext,
+            IConnection rabbitMQConnection,
+            IConfiguration configuration)
+        {
+            _dbContext = dbContext;
+            _rabbitMQConnection = rabbitMQConnection;
+
+            _estoqueExchangeName = configuration["MessagePublishing:EstoqueExchange"]
+                ?? throw new ArgumentException("A chave 'MessagePublishing:EstoqueExchange' não pode ser nula.");
+
+            _channel = _rabbitMQConnection.CreateModel();
+            _channel.ExchangeDeclare(exchange: _estoqueExchangeName, type: "topic", durable: true);
         }
 
-        public async Task ProcessarBaixaEstoqueAsync(PedidoCriadoMessage message)
+        public async Task BaixarEstoque(BaixaEstoqueMessage message)
         {
-            _logger.LogInformation($"[Estoque] Processando Pedido ID: {message.PedidoId}");
-
-            // 1. Itera sobre cada item do pedido
-            foreach (var item in message.Itens)
+            using var transaction = await _dbContext.Database.BeginTransactionAsync();
+            try
             {
-                // Busca o produto no banco de dados
-                var produto = await _context.Produtos
-                                            .FirstOrDefaultAsync(p => p.Id == item.ProdutoId);
+                var motivoFalha = string.Empty;
 
-                if (produto == null)
+                foreach (var item in message.Items)
                 {
-                    _logger.LogWarning($"[Estoque] Produto ID {item.ProdutoId} não encontrado. Pedido {message.PedidoId} não processado.");
-                    // Em um cenário real, você publicaria um evento de falha ou faria retry.
-                    continue; 
-                }
+                    var produto = await _dbContext.Produtos.FindAsync(item.ProdutoId);
 
-                if (produto.QuantidadeEmEstoque >= item.Quantidade)
-                {
-                    // 2. Realiza a baixa de estoque
+                    if (produto == null)
+                    {
+                        motivoFalha = $"Produto ID {item.ProdutoId} não encontrado.";
+                        break;
+                    }
+
+                    if (produto.QuantidadeEmEstoque < item.Quantidade)
+                    {
+                        motivoFalha = $"Estoque insuficiente para o produto ID: {item.ProdutoId}.";
+                        break;
+                    }
+
                     produto.QuantidadeEmEstoque -= item.Quantidade;
-                    _logger.LogInformation($"[Estoque] Baixa de {item.Quantidade} unidades do Produto ID {item.ProdutoId}. Novo estoque: {produto.QuantidadeEmEstoque}.");
+                    _dbContext.Produtos.Update(produto);
                 }
-                else
-                {
-                    _logger.LogError($"[Estoque] FALHA: Estoque insuficiente para Produto ID {item.ProdutoId}. Estoque atual: {produto.QuantidadeEmEstoque}, Necessário: {item.Quantidade}.");
-                    // Marca o item ou o pedido como falho.
-                }
-            }
 
-            // 3. Salva todas as alterações no banco de dados
-            await _context.SaveChangesAsync();
-            _logger.LogInformation($"[Estoque] Pedido ID {message.PedidoId} processado com sucesso.");
+                if (!string.IsNullOrEmpty(motivoFalha))
+                {
+                    await transaction.RollbackAsync();
+                    // Chama o método da interface
+                    await PublishFailedMessage(message, motivoFalha); 
+                    throw new InvalidOperationException(motivoFalha);
+                }
+
+                await _dbContext.SaveChangesAsync();
+                await transaction.CommitAsync();
+
+                // Chama o método da interface
+                await PublishConfirmationMessage(message); 
+            }
+            catch (Exception ex)
+            {
+                if (transaction.GetDbTransaction().Connection != null)
+                {
+                    await transaction.RollbackAsync();
+                }
+                Console.WriteLine($"Erro ao processar BaixaEstoque: {ex.Message}");
+                throw; 
+            }
+        }
+
+        /// <summary>
+        /// Implementação do método da interface para publicar mensagem de confirmação.
+        /// </summary>
+        public Task PublishConfirmationMessage(BaixaEstoqueMessage originalMessage)
+        {
+            var confirmedMessage = new BaixaEstoqueConfirmedMessage
+            {
+                PedidoId = originalMessage.PedidoId, 
+                TipoMensagem = MessageType.BaixaEstoqueConfirmed
+            };
+            var json = JsonSerializer.Serialize(confirmedMessage, JsonSerializerOptions);
+            var body = Encoding.UTF8.GetBytes(json);
+
+            _channel.BasicPublish(
+                exchange: _estoqueExchangeName,
+                routingKey: "baixa-estoque-confirmed",
+                basicProperties: null,
+                body: body);
+
+            return Task.CompletedTask;
+        }
+
+        /// <summary>
+        /// Implementação do método da interface para publicar mensagem de falha.
+        /// </summary>
+        public Task PublishFailedMessage(BaixaEstoqueMessage originalMessage, string reason)
+        {
+            var failedMessage = new BaixaEstoqueFailedMessage
+            {
+                PedidoId = originalMessage.PedidoId, 
+                MotivoFalha = reason,
+                TipoMensagem = MessageType.BaixaEstoqueFailed
+            };
+            var json = JsonSerializer.Serialize(failedMessage, JsonSerializerOptions);
+            var body = Encoding.UTF8.GetBytes(json);
+
+            _channel.BasicPublish(
+                exchange: _estoqueExchangeName,
+                routingKey: "baixa-estoque-failed",
+                basicProperties: null,
+                body: body);
+
+            return Task.CompletedTask;
+        }
+        
+        /// <summary>
+        /// Implementação do método da interface para republicar a mensagem (usado para DLQ ou retentativas).
+        /// </summary>
+        public Task RepublishMessage(BaixaEstoqueMessage message)
+        {
+            var json = JsonSerializer.Serialize(message, JsonSerializerOptions);
+            var body = Encoding.UTF8.GetBytes(json);
+
+            _channel.BasicPublish(
+                exchange: _estoqueExchangeName,
+                routingKey: "baixa-estoque-inbound", // Chave para a fila principal/original
+                basicProperties: null,
+                body: body);
+
+            return Task.CompletedTask;
+        }
+
+        // Método para garantir o dispose do canal (corrigido para ser implementado explicitamente do IDisposable)
+        public void Dispose()
+        {
+            _channel?.Close();
+            _channel?.Dispose();
+
+            GC.SuppressFinalize(this); 
         }
     }
 }
