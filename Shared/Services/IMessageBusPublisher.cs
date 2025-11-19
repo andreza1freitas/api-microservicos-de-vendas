@@ -4,7 +4,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Shared.Events;
 
-namespace Vendas.API.Services
+namespace Shared.Services
 {
     public interface IMessageBusPublisher
     {
