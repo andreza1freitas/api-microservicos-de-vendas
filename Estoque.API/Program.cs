@@ -5,15 +5,16 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
+using RabbitMQ.Client; 
+using Estoque.API.Messaging; 
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
+// --- CONFIGURAÇÃO JWT e SWAGGER ---
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
-    // Define a segurança do Swagger (O campo 'Authorize' será adicionado no topo da UI)
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Description = "Insira o token JWT no formato: Bearer {token}",
@@ -23,8 +24,6 @@ builder.Services.AddSwaggerGen(c =>
         BearerFormat = "JWT",
         In = ParameterLocation.Header
     });
-
-    // Define que as rotas com [Authorize] usarão a definição 'Bearer' acima
     c.AddSecurityRequirement(new OpenApiSecurityRequirement
     {
         {
@@ -41,21 +40,10 @@ builder.Services.AddSwaggerGen(c =>
     });
 });
 
-builder.Services.AddDbContext<EstoqueDbContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("EstoqueDbConnection")));
-
-// Registro do EstoqueService
-builder.Services.AddScoped<IEstoqueService, EstoqueService>();
-
-// Registro do RabbitMQConsumer como serviço hospedado
-builder.Services.AddHostedService<RabbitMQConsumer>();
-
-//  CONFIGURAÇÃO JWT 
-// Lendo diretamente do appsettings.json
+// --- CONFIGURAÇÃO DE AUTENTICAÇÃO JWT ---
 var jwtKey = builder.Configuration["Jwt:Key"] ?? throw new InvalidOperationException("Jwt:Key não configurada.");
 var issuer = builder.Configuration["Jwt:Issuer"] ?? throw new InvalidOperationException("Jwt:Issuer não configurado.");
 var audience = builder.Configuration["Jwt:Audience"] ?? throw new InvalidOperationException("Jwt:Audience não configurado.");
-
 
 builder.Services.AddAuthentication(options =>
 {
@@ -75,8 +63,39 @@ builder.Services.AddAuthentication(options =>
         IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
     };
 });
-
 builder.Services.AddAuthorization();
+
+
+// Configuração do DB
+builder.Services.AddDbContext<EstoqueDbContext>(options =>
+    options.UseSqlServer(builder.Configuration.GetConnectionString("EstoqueDbConnection")));
+
+// Configuração do RabbitMQ Settings para o MessageHandler
+builder.Services.Configure<RabbitMQSettings>(builder.Configuration.GetSection("RabbitMQ"));
+
+// Registro da Conexão RabbitMQ (Singleton)
+builder.Services.AddSingleton<IConnection>(sp =>
+{
+    var hostName = builder.Configuration.GetSection("RabbitMQ:HostName").Value;
+    if (string.IsNullOrWhiteSpace(hostName))
+    {
+        throw new InvalidOperationException("RabbitMQ HostName não está configurado.");
+    }
+    
+    var factory = new ConnectionFactory() 
+    { 
+        HostName = hostName,
+        DispatchConsumersAsync = true 
+    };
+
+    return factory.CreateConnection();
+});
+
+// Registro do EstoqueService (Scoped)
+builder.Services.AddScoped<IEstoqueService, EstoqueService>();
+
+// Registro do EstoqueMessageHandler (Hosted Service)
+builder.Services.AddHostedService<EstoqueMessageHandler>();
 
 
 var app = builder.Build();
@@ -101,8 +120,6 @@ if (app.Environment.IsDevelopment())
 app.UseAuthentication();
 app.UseAuthorization();
 
-
 app.MapControllers();
 
 app.Run();
-
