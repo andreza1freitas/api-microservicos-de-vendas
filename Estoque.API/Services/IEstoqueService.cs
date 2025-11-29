@@ -1,25 +1,29 @@
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
-using Estoque.API.Models;
+using Shared.Enums;
 using Shared.Messaging;
 
 namespace Estoque.API.Services
 {
     public interface IEstoqueService
     {
-        // Método para baixar o estoque com base na mensagem recebida
+        // Baixa de estoque (fluxo de criação de pedido)
         Task BaixarEstoque(BaixaEstoqueMessage message);
 
-        // Método para republicar a mensagem em caso de falha
-        Task RepublishMessage(BaixaEstoqueMessage message);
+        // Estorno de estoque (fluxo de cancelamento de pedido)
+        Task EstornarEstoque(EstornoEstoqueMessage message); 
 
-       // Método para publicar mensagem de confirmação
+        // Publica mensagem de confirmação de baixa
         Task PublishConfirmationMessage(BaixaEstoqueMessage originalMessage);
+        
+        // Publica mensagem de confirmação de estorno
+        Task PublishEstornoConfirmationMessage(EstornoEstoqueMessage originalMessage);
 
-        // Método para publicar mensagem de falha
-        Task PublishFailedMessage(BaixaEstoqueMessage originalMessage, string reason);
+        // Publica mensagem de falha na baixa ou estorno
+        Task PublishFailedMessage(Guid pedidoId, MessageType tipoOriginal, string reason); 
 
+        // Republica a mensagem em caso de falha temporária 
+        // Aceita o objeto da mensagem (BaixaEstoqueMessage ou EstornoEstoqueMessage) e o tipo.
+        Task RepublishMessage(object message, MessageType type); 
     }
 }

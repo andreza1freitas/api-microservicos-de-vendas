@@ -70,31 +70,9 @@ builder.Services.AddAuthorization();
 builder.Services.AddDbContext<EstoqueDbContext>(options =>
     options.UseSqlServer(builder.Configuration.GetConnectionString("EstoqueDbConnection")));
 
-// Configuração do RabbitMQ Settings para o MessageHandler
-builder.Services.Configure<RabbitMQSettings>(builder.Configuration.GetSection("RabbitMQ"));
-
-// Registro da Conexão RabbitMQ (Singleton)
-builder.Services.AddSingleton<IConnection>(sp =>
-{
-    var hostName = builder.Configuration.GetSection("RabbitMQ:HostName").Value;
-    if (string.IsNullOrWhiteSpace(hostName))
-    {
-        throw new InvalidOperationException("RabbitMQ HostName não está configurado.");
-    }
-    
-    var factory = new ConnectionFactory() 
-    { 
-        HostName = hostName,
-        DispatchConsumersAsync = true 
-    };
-
-    return factory.CreateConnection();
-});
-
 // Registro do EstoqueService (Scoped)
 builder.Services.AddScoped<IEstoqueService, EstoqueService>();
 
-// Registro do EstoqueMessageHandler (Hosted Service)
 builder.Services.AddHostedService<EstoqueMessageHandler>();
 
 
