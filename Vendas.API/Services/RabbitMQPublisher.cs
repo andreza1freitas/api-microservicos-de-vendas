@@ -1,5 +1,6 @@
 using RabbitMQ.Client;
 using Shared.Events;
+using Shared.Services;
 using System.Text;
 using System.Text.Json;
 
@@ -11,7 +12,13 @@ namespace Vendas.API.Services
         private readonly IConfiguration _configuration;
         private IConnection? _connection;
         private IModel? _channel;
-        private const string EXCHANGE_NAME = "vendas_exchange"; // Nome da Exchange
+
+        // Constantes para comunicação com o Estoque.API
+        private const string ESTOQUE_EXCHANGE = "estoque-exchange";
+        private const string BAIXA_ESTOQUE_ROUTING_KEY = "baixa-estoque";
+        
+        // Constante para a exchange de status da própria Vendas (para consumo por outros serviços)
+        private const string VENDAS_STATUS_EXCHANGE = "vendas-status-exchange";
 
         public RabbitMQPublisher(IConfiguration configuration)
         {
@@ -27,11 +34,11 @@ namespace Vendas.API.Services
             }
         }
 
+        // Inicializa a conexão com o RabbitMQ
         private void InitializeRabbitMQ()
         {
             try
             {
-                // Lendo a string de conexão completa (e.g., amqp://guest:guest@localhost:5672)
                 string connectionString = _configuration.GetValue<string>("RabbitMQ:ConnectionString")
                     ?? throw new InvalidOperationException("RabbitMQ:ConnectionString não configurada.");
 
@@ -43,10 +50,13 @@ namespace Vendas.API.Services
                 _connection = factory.CreateConnection();
                 _channel = _connection.CreateModel();
 
-                // Declara a Exchange do tipo 'fanout' para distribuir a mensagem
-                _channel.ExchangeDeclare(exchange: EXCHANGE_NAME, type: ExchangeType.Fanout, durable: true);
+                // Declara a exchange do Estoque (garante que ela existe e é do tipo Topic)
+                _channel.ExchangeDeclare(exchange: ESTOQUE_EXCHANGE, type: ExchangeType.Topic, durable: true);
+                
+                // Declara a exchange de Vendas
+                _channel.ExchangeDeclare(exchange: VENDAS_STATUS_EXCHANGE, type: ExchangeType.Topic, durable: true);
 
-                Console.WriteLine("--> Conexão com RabbitMQ estabelecida e Exchange declarada.");
+                Console.WriteLine("--> Conexão com RabbitMQ estabelecida e Exchanges declaradas.");
             }
             catch (Exception ex)
             {
@@ -54,38 +64,71 @@ namespace Vendas.API.Services
             }
         }
 
-        // NOVO método de publicação, conforme a interface IMessageBusPublisher
-        public void PublishEvent(PedidoCriadoEvent evento)
+        // Obtém a Exchange e a Routing Key correta para cada tipo de evento.
+        private (string Exchange, string RoutingKey) GetRoutingDetails<T>() where T : IEvent
         {
-            // Verifica a conexão antes de publicar
+            var eventName = typeof(T).Name;
+
+            if (eventName == nameof(PedidoCriadoEvent))
+            {
+                // A mensagem vai para a Exchange do Estoque com a chave que a fila está ligada.
+                return (ESTOQUE_EXCHANGE, BAIXA_ESTOQUE_ROUTING_KEY);
+            }
+            // Roteamento para eventos de atualização de status
+            else if (eventName == nameof(PedidoStatusAtualizadoEvent))
+            {
+                // Roteia para a exchange de Vendas/Status.
+                return (VENDAS_STATUS_EXCHANGE, eventName);
+            }
+            
+            return ("default-exchange", eventName);
+        }
+
+        // Implementação da sobrecarga de 1 argumento (usa o GetRoutingDetails)
+        public void PublishEvent<T>(T message) where T : IEvent
+        {
             if (_connection == null || !_connection.IsOpen || _channel == null)
             {
-                Console.WriteLine("--> Conexão com RabbitMQ fechada ou nula. Não publicou. Tentando restabelecer...");
-                InitializeRabbitMQ();
-
-                if (_connection == null || !_connection.IsOpen || _channel == null)
-                {
-                    Console.WriteLine("--> Falha ao restabelecer a conexão. Abortando publicação.");
-                    return;
-                }
+                Console.WriteLine("--> Conexão com RabbitMQ não está pronta. Abortando publicação.");
+                return;
             }
 
-            var message = JsonSerializer.Serialize(evento);
-            var body = Encoding.UTF8.GetBytes(message);
+            // Obtém o destino correto
+            var (exchangeName, routingKey) = GetRoutingDetails<T>();
+            
+            PublishInternal(message, exchangeName, routingKey);
+        }
 
-            // Publica a mensagem na Exchange
-            _channel!.BasicPublish(
-                exchange: EXCHANGE_NAME,
-                routingKey: "",
+        public void PublishEvent<T>(T message, string exchange, string routingKey) where T : IEvent
+        {
+             if (_connection == null || !_connection.IsOpen || _channel == null)
+            {
+                Console.WriteLine("--> Conexão com RabbitMQ não está pronta. Abortando publicação.");
+                return;
+            }
+
+            PublishInternal(message, exchange, routingKey);
+        }
+
+        // Método auxiliar para publicação
+        private void PublishInternal<T>(T message, string exchangeName, string routingKey) where T : IEvent
+        {
+            // Serializa a mensagem
+            var messageJson = JsonSerializer.Serialize(message);
+            var body = Encoding.UTF8.GetBytes(messageJson);
+
+            // Publica a mensagem no destino
+            _channel.BasicPublish(
+                exchange: exchangeName,
+                routingKey: routingKey,
                 basicProperties: null,
                 body: body
             );
-            Console.WriteLine($"--> Pedido Publicado no Message Bus: Pedido ID {evento.PedidoId}");
+            Console.WriteLine($"--> Evento do tipo '{typeof(T).Name}' Publicado. Destino: {exchangeName}/{routingKey}");
         }
 
         public void Dispose()
         {
-            // Libera recursos
             _channel?.Close();
             _connection?.Close();
         }
