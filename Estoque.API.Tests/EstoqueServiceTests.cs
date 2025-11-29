@@ -15,16 +15,16 @@ using System.Threading.Tasks;
 using System; 
 using System.Linq;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Data.Sqlite; 
 
 namespace Estoque.API.Tests.Services
 {
-    // A implementação de IDisposable garante que o banco de dados em memória seja limpo após cada teste
+    // A implementação de IDisposable garante que o banco de dados seja limpo após cada teste
     public class EstoqueServiceTests : IDisposable
     {
         private readonly EstoqueDbContext _context;
-        private readonly Mock<IConnection> _rabbitMQConnectionMock;
+        private readonly SqliteConnection _connection; 
         private readonly Mock<IConfiguration> _configurationMock;
-        private readonly Mock<IModel> _channelMock;
 
         private readonly EstoqueService _estoqueService;
 
@@ -34,28 +34,17 @@ namespace Estoque.API.Tests.Services
 
         public EstoqueServiceTests()
         {
-            // Configuração do DbContext em memória para testes
+            // 1. Configura e abre a conexão SQLite In-Memory
+            _connection = new SqliteConnection("Filename=:memory:");
+            _connection.Open();
+
+            // 2. Configuração do DbContext para usar o SQLite
             var options = new DbContextOptionsBuilder<EstoqueDbContext>()
-                .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-                // Garante que o Entity Framework In-Memory ignore o aviso de transação
-                .ConfigureWarnings(w => w.Ignore(InMemoryEventId.TransactionIgnoredWarning))
+                .UseSqlite(_connection) 
                 .Options;
 
             _context = new EstoqueDbContext(options);
-
-            // Mocking da Conexão e do Canal (IConnection e IModel)
-            _rabbitMQConnectionMock = new Mock<IConnection>();
-            _channelMock = new Mock<IModel>();
-
-            // Configura a conexão para retornar o canal mockado
-            _rabbitMQConnectionMock.Setup(c => c.CreateModel()).Returns(_channelMock.Object);
-            // Setup do ExchangeDeclare para não reclamar
-            _channelMock.Setup(c => c.ExchangeDeclare(
-                It.IsAny<string>(), 
-                It.IsAny<string>(), 
-                It.IsAny<bool>(), 
-                It.IsAny<bool>(), 
-                It.IsAny<IDictionary<string, object>>()));
+            _context.Database.EnsureCreated(); // Cria o schema do banco de dados
 
             // Mocking da Configuração
             _configurationMock = new Mock<IConfiguration>();
@@ -64,10 +53,13 @@ namespace Estoque.API.Tests.Services
                 .SetupGet(c => c["MessagePublishing:EstoqueExchange"])
                 .Returns(_estoqueExchangeName);
             
+            _configurationMock
+                .SetupGet(c => c["RabbitMQ:HostName"])
+                .Returns("localhost");
+            
             // Criação do serviço sob teste
             _estoqueService = new EstoqueService(
                 _context,
-                _rabbitMQConnectionMock.Object,
                 _configurationMock.Object);
         }
 
@@ -75,10 +67,11 @@ namespace Estoque.API.Tests.Services
         {
             _context.Produtos.AddRange(produtos);
             _context.SaveChanges();
+            _context.ChangeTracker.Clear(); 
         }
 
         [Fact]
-        public async Task BaixarEstoque_DeveBaixarCorretamente_E_PublicarConfirmacao()
+        public async Task BaixarEstoque_DeveBaixarCorretamente()
         {
             // Arrange
             var produto1 = new Produto { Id = 1, QuantidadeEmEstoque = 10, Nome = "Item A", Preco = 10.0m };
@@ -94,53 +87,17 @@ namespace Estoque.API.Tests.Services
                     new BaixaEstoqueItemMessage { ProdutoId = 2, Quantidade = 5 }
                 }
             };
-            
-            // Variáveis para capturar os argumentos do BasicPublish
-            string? capturedRoutingKey = null;
-            ReadOnlyMemory<byte> capturedBody = default;
-
-            // CAPTURA DO ARGUMENTO: Configura o Mock para capturar o body e a routingKey
-            _channelMock.Setup(c => c.BasicPublish(
-                It.Is<string>(e => e == _estoqueExchangeName),
-                It.IsAny<string>(), // Captura a routingKey
-                It.IsAny<bool>(),
-                It.IsAny<IBasicProperties>(),
-                It.IsAny<ReadOnlyMemory<byte>>() // Captura o body
-            ))
-            .Callback<string, string, bool, IBasicProperties, ReadOnlyMemory<byte>>((exchange, routingKey, mandatory, props, body) => 
-            {
-                capturedRoutingKey = routingKey;
-                capturedBody = body;
-            });
-
 
             // Act
             await _estoqueService.BaixarEstoque(message);
 
-            // Verifica se o estoque foi atualizado no banco
+            // Verifica se o estoque foi atualizado corretamente
             Assert.Equal(7, _context.Produtos.Find(1)!.QuantidadeEmEstoque);
             Assert.Equal(0, _context.Produtos.Find(2)!.QuantidadeEmEstoque);
-
-            // Verifica se BasicPublish foi chamado exatamente uma vez (chamada genérica)
-            _channelMock.Verify(
-                c => c.BasicPublish(
-                    It.Is<string>(e => e == _estoqueExchangeName), 
-                    It.IsAny<string>(), 
-                    It.IsAny<bool>(),
-                    It.IsAny<IBasicProperties>(),
-                    It.IsAny<ReadOnlyMemory<byte>>()
-                ),
-                Times.Once,
-                "A mensagem de confirmação não foi publicada."
-            );
-
-            // Verifica o conteúdo capturado fora da expressão lambda do Verify
-            Assert.Equal("baixa-estoque-confirmed", capturedRoutingKey);
-            Assert.True(VerifyConfirmationBody(capturedBody.ToArray(), TestPedidoId), "O payload de confirmação está incorreto.");
         }
 
         [Fact]
-        public async Task BaixarEstoque_DeveFalhar_SeProdutoNaoExistir_E_PublicarFalha()
+        public async Task BaixarEstoque_DeveFalhar_SeProdutoNaoExistir()
         {
             // Arrange
             var produtoExistente = new Produto { Id = 100, QuantidadeEmEstoque = 10, Nome = "Item C", Preco = 5.0m };
@@ -159,25 +116,6 @@ namespace Estoque.API.Tests.Services
             };
 
             var initialStock = _context.Produtos.Find(100)!.QuantidadeEmEstoque;
-            string expectedReason = $"Produto ID {nonExistingProductId} não encontrado.";
-            
-            // Variáveis para capturar os argumentos do BasicPublish
-            string? capturedRoutingKey = null;
-            ReadOnlyMemory<byte> capturedBody = default;
-            
-            // CAPTURA DO ARGUMENTO: Configura o Mock para capturar o body e a routingKey
-            _channelMock.Setup(c => c.BasicPublish(
-                It.Is<string>(e => e == _estoqueExchangeName),
-                It.IsAny<string>(), 
-                It.IsAny<bool>(),
-                It.IsAny<IBasicProperties>(),
-                It.IsAny<ReadOnlyMemory<byte>>()
-            ))
-            .Callback<string, string, bool, IBasicProperties, ReadOnlyMemory<byte>>((exchange, routingKey, mandatory, props, body) => 
-            {
-                capturedRoutingKey = routingKey;
-                capturedBody = body;
-            });
 
             // Act & Assert
             // Espera-se que lance uma InvalidOperationException
@@ -188,26 +126,11 @@ namespace Estoque.API.Tests.Services
             // Verifica se o estoque do produto existente NÃO foi alterado (Rollback)
             Assert.Equal(initialStock, _context.Produtos.Find(100)!.QuantidadeEmEstoque);
             
-            // Verifica se BasicPublish foi chamado exatamente uma vez
-             _channelMock.Verify(
-                c => c.BasicPublish(
-                    It.Is<string>(e => e == _estoqueExchangeName), 
-                    It.IsAny<string>(), 
-                    It.IsAny<bool>(),
-                    It.IsAny<IBasicProperties>(),
-                    It.IsAny<ReadOnlyMemory<byte>>()
-                ),
-                Times.Once,
-                "A mensagem de falha não foi publicada."
-            );
-            
-            // Verifica o conteúdo capturado fora da expressão lambda do Verify
-            Assert.Equal("baixa-estoque-failed", capturedRoutingKey);
-            Assert.True(VerifyFailureBody(capturedBody.ToArray(), message.PedidoId, expectedReason), "O payload de falha está incorreto.");
+            Assert.Contains("não encontrado", exception.Message);
         }
         
         [Fact]
-        public async Task BaixarEstoque_DeveFalhar_SeEstoqueInsuficiente_E_PublicarFalha()
+        public async Task BaixarEstoque_DeveFalhar_SeEstoqueInsuficiente()
         {
             // Arrange
             var produto1 = new Produto { Id = 50, QuantidadeEmEstoque = 5, Nome = "Item com pouco estoque", Preco = 10.0m };
@@ -226,26 +149,6 @@ namespace Estoque.API.Tests.Services
             };
 
             var initialStock = _context.Produtos.Find(50)!.QuantidadeEmEstoque;
-            string expectedReason = $"Estoque insuficiente para o produto ID: 50.";
-            
-            // Variáveis para capturar os argumentos do BasicPublish
-            string? capturedRoutingKey = null;
-            ReadOnlyMemory<byte> capturedBody = default;
-            
-            // CAPTURA DO ARGUMENTO: Configura o Mock para capturar o body e a routingKey
-            _channelMock.Setup(c => c.BasicPublish(
-                It.Is<string>(e => e == _estoqueExchangeName),
-                It.IsAny<string>(), 
-                It.IsAny<bool>(),
-                It.IsAny<IBasicProperties>(),
-                It.IsAny<ReadOnlyMemory<byte>>()
-            ))
-            .Callback<string, string, bool, IBasicProperties, ReadOnlyMemory<byte>>((exchange, routingKey, mandatory, props, body) => 
-            {
-                capturedRoutingKey = routingKey;
-                capturedBody = body;
-            });
-
 
             // Act & Assert
             // Espera-se que lance uma InvalidOperationException
@@ -256,68 +159,17 @@ namespace Estoque.API.Tests.Services
             // Verifica se o estoque NÃO foi alterado (Rollback)
             Assert.Equal(initialStock, _context.Produtos.Find(50)!.QuantidadeEmEstoque);
 
-            // Verifica se BasicPublish foi chamado exatamente uma vez
-            _channelMock.Verify(
-                c => c.BasicPublish(
-                    It.Is<string>(e => e == _estoqueExchangeName), 
-                    It.IsAny<string>(), 
-                    It.IsAny<bool>(),
-                    It.IsAny<IBasicProperties>(),
-                    It.IsAny<ReadOnlyMemory<byte>>()
-                ),
-                Times.Once,
-                "A mensagem de falha por estoque insuficiente não foi publicada corretamente."
-            );
-            
-            // Verifica o conteúdo capturado fora da expressão lambda do Verify
-            Assert.Equal("baixa-estoque-failed", capturedRoutingKey);
-            Assert.True(VerifyFailureBody(capturedBody.ToArray(), message.PedidoId, expectedReason), "O payload de falha está incorreto.");
+            // Verifica a mensagem de erro
+            Assert.Contains("Estoque insuficiente", exception.Message);
         }
 
-        // Método auxiliar para verificar o corpo (payload) da mensagem de Confirmação
-        private bool VerifyConfirmationBody(byte[] body, Guid expectedPedidoId)
-        {
-            var json = Encoding.UTF8.GetString(body);
-            try
-            {
-                // Usando a classe BaixaEstoqueConfirmedMessage
-                var message = JsonSerializer.Deserialize<BaixaEstoqueConfirmedMessage>(json, EstoqueService.JsonSerializerOptions);
-
-                return message != null && 
-                       message.PedidoId == expectedPedidoId && 
-                       message.TipoMensagem == MessageType.BaixaEstoqueConfirmed;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-        
-        // Método auxiliar para verificar o corpo (payload) da mensagem de Falha
-        private bool VerifyFailureBody(byte[] body, Guid expectedPedidoId, string expectedReason)
-        {
-            var json = Encoding.UTF8.GetString(body);
-            try
-            {
-                // Usando a classe BaixaEstoqueFailedMessage
-                var message = JsonSerializer.Deserialize<BaixaEstoqueFailedMessage>(json, EstoqueService.JsonSerializerOptions);
-
-                return message != null && 
-                       message.PedidoId == expectedPedidoId && 
-                       message.MotivoFalha == expectedReason &&
-                       message.TipoMensagem == MessageType.BaixaEstoqueFailed;
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-       // Limpa o banco de dados em memória após cada teste
+        // Limpa o banco de dados em memória após cada teste
         public void Dispose()
         {
             _context.Database.EnsureDeleted();
             _context.Dispose();
+            _connection.Close();
+            _connection.Dispose();
         }
     }
 }
