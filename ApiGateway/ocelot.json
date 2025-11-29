@@ -1,5 +1,5 @@
 {
-    "Routes": [
+  "Routes": [
     {
       "DownstreamPathTemplate": "/",
       "DownstreamScheme": "http",
@@ -11,8 +11,9 @@
       ],
       "UpstreamPathTemplate": "/",
       "UpstreamHttpMethod": [ "Get" ],
-      "Priority": 0 
+      "Priority": 1
     },
+
     {
       "DownstreamPathTemplate": "/api/auth/{everything}",
       "DownstreamScheme": "http",
@@ -24,13 +25,11 @@
       ],
       "UpstreamPathTemplate": "/api/auth/{everything}",
       "UpstreamHttpMethod": [ "Post" ],
-      "Priority": 1,
-      "AuthenticationOptions": {
-        "AllowScopes": []
-      }
+      "Priority": 1
     },
+
     {
-      "DownstreamPathTemplate": "/api/pedidos",
+      "DownstreamPathTemplate": "/api/pedidos/{everything}",
       "DownstreamScheme": "http",
       "DownstreamHostAndPorts": [
         {
@@ -38,16 +37,17 @@
           "Port": 5011
         }
       ],
-      "UpstreamPathTemplate": "/api/vendas/pedidos",
-      "UpstreamHttpMethod": [ "Post" ],
+      "UpstreamPathTemplate": "/api/pedidos/{everything}",
+      "UpstreamHttpMethod": [ "Get", "Post", "Put", "Delete" ],
       "Priority": 1,
       "AuthenticationOptions": {
         "AuthenticationProviderKey": "Bearer",
         "AllowedScopes": []
       }
     },
+
     {
-      "DownstreamPathTemplate": "/api/Produtos/{everything}",
+      "DownstreamPathTemplate": "/api/produtos/{everything}",
       "DownstreamScheme": "http",
       "DownstreamHostAndPorts": [
         {
@@ -55,7 +55,7 @@
           "Port": 5154
         }
       ],
-      "UpstreamPathTemplate": "/api/estoque/{everything}",
+      "UpstreamPathTemplate": "/api/produtos/{everything}",
       "UpstreamHttpMethod": [ "Get", "Post", "Put", "Delete" ],
       "Priority": 1,
       "AuthenticationOptions": {
@@ -67,7 +67,7 @@
 
   "AuthenticationProviderKeys": {
     "Bearer": {
-      "Authority": "http://localhost:5045", 
+      "Authority": "http://localhost:5045",
       "ValidateIssuer": true,
       "ValidateAudience": true,
       "ValidIssuer": "ecom-api-issuer",
@@ -78,8 +78,8 @@
       "Key": "ejyEu9GEFRboj4ggyVrAPbmfs1odBlf2EjdBf7zjnVf"
     }
   },
-  
+
   "GlobalConfiguration": {
     "BaseUrl": "http://localhost:5197"
   }
-}
+} 
