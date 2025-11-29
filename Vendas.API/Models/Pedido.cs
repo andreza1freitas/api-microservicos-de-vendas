@@ -1,18 +1,24 @@
 using System;
 using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Threading.Tasks;
+using Vendas.API.Enums;
 
 namespace Vendas.API.Models
 {
     public class Pedido
     {
-        public int Id { get; set; }
+        [Key]
+        public Guid Id { get; set; }
+        
         public DateTime DataPedido { get; set; } = DateTime.UtcNow;
         public decimal ValorTotal { get; set; }
-        public string Status { get; set; } = "Pendente"; // Pendente, Processando, Enviado, Cancelado
+        
+        // 2. Usando a enumeração em vez de string
+        public StatusPedido Status { get; set; }
         
         // Relacionamento 1:N com ItemPedido
-        public ICollection<ItemPedido>? Itens { get; set; }
+        public ICollection<ItemPedido> Items { get; set; } = new List<ItemPedido>();
     }
 }

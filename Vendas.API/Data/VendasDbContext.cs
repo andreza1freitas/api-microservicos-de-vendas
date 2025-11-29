@@ -21,7 +21,7 @@ namespace Vendas.API.Data
         {
             modelBuilder.Entity<ItemPedido>()
                 .HasOne(ip => ip.Pedido)
-                .WithMany(p => p.Itens)
+                .WithMany(p => p.Items)
                 .HasForeignKey(ip => ip.PedidoId);
 
             // Configuração de precisão do decimal

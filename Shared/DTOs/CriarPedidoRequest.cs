@@ -8,7 +8,6 @@ namespace Shared
 {
     public class CriarPedidoRequest
     {
-        public int ClienteId { get; set; }
-        public List<ItemPedidoRequest>? Itens { get; set; }
+        public List<ItemPedidoRequest>? Items { get; set; }
     }
 }
